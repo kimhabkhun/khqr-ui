@@ -1,0 +1,16 @@
+{
+  "name": "khqr-ui",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "npm run dev -w @khqr-ui/playground",
+    "build": "npm run build -w @khqr-ui/ui",
+    "test": "npm run test -w @khqr-ui/ui"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
