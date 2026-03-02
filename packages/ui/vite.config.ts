@@ -9,18 +9,12 @@ export default defineConfig({
     lib: {
       entry: resolve(__dirname, "src/index.ts"),
       name: "KHQRUI",
-      fileName: (format) => `index.${format}.js`,
-      formats: ["es", "cjs"]
+      formats: ["es", "cjs"],
+      fileName: (format) => `index.${format}.js`
     },
+    cssCodeSplit: false, // 🔥 Important for library CSS
     rollupOptions: {
-      // Don’t bundle react/react-dom
-      external: ["react", "react-dom"],
-      output: {
-        globals: {
-          react: "React",
-          "react-dom": "ReactDOM"
-        }
-      }
+      external: ["react", "react-dom"]
     }
   }
 })
