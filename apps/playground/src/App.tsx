@@ -11,11 +11,17 @@
 //   );
 // }
 import { KhqrQrCard } from "./components/KhqrQrCard"; // or from your package export
+import PaymentCard from "./components/PaymentCard";
 
 export default function App() {
   return (
-    <div className="flex items-center justify-center min-h-screen p-10 bg-neutral-100">
+    <div className="flex items-center justify-center w-screen min-h-screen p-10 bg-neutral-100">
       <div className="w-[320px]">
+<PaymentCard 
+  name="Devit Houtkeo" 
+  amount="1,300,000" 
+  currency="KHR" 
+/>
         <KhqrQrCard
           receiverName="Devit Houtkeo"
           amount={1300000}

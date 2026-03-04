@@ -1,4 +1,3 @@
-
 export type KhqrQrCardProps = {
   receiverName: string;
   amount?: number | string; // can be empty
@@ -9,12 +8,10 @@ export type KhqrQrCardProps = {
 };
 
 /**
- * KHQR QR Card
+ * KHQR QR Card (Responsive + consistent)
  * - Aspect ratio: 20:29
  * - Header height: 12% of card height
- * - Left/Right padding: ~10% of card height (per guideline)
- * - Top/Bottom padding for QR section: ~8% of card height
- * - Shadow: x0 y0 blur16 black 10%
+ * - Folded corner: always bottom-right of header (no fixed px)
  */
 export function KhqrQrCard({
   receiverName,
@@ -44,57 +41,66 @@ export function KhqrQrCard({
   return (
     <div
       className={[
-        // ratio 20:29 => height = width * 29/20
-        "relative w-full max-w-90 aspect-20/29 rounded-2xl bg-white overflow-hidden",
-        // shadow: 0 0 16px rgba(0,0,0,0.10)
+        "relative w-full max-w-[360px] aspect-[20/29] rounded-2xl bg-white overflow-hidden",
         "shadow-[0_0_16px_rgba(0,0,0,0.10)]",
         className,
       ].join(" ")}
+      style={
+        {
+          // scale tokens based on card width (responsive & stable)
+          // fold size and paddings will remain consistent across breakpoints
+          ["--fold" as any]: "clamp(18px, 6vw, 30px)",
+          ["--padX" as any]: "clamp(16px, 4.2vw, 28px)",
+          ["--padTop" as any]: "clamp(14px, 3.8vw, 22px)",
+          ["--qrPadY" as any]: "clamp(16px, 5vw, 28px)",
+        } as React.CSSProperties
+      }
     >
       {/* HEADER (12% height) */}
-      <div
-        className="relative w-full"
-        style={{ height: "12%" }}
-      >
-        <div className="absolute inset-0 bg-[#E1232E]" />
-        {/* Brand text centered */}
-        <div className="relative flex items-center justify-center h-full">
-          <span className="text-lg font-extrabold tracking-widest text-white">
-            <img 
-              src="/KHQR_Logo.png" 
-              alt="KHQR Logo"
-              className="w-16 sm:w-32 md:w-40 lg:w-48 brightness-0 invert"
-            />
-          </span>
-          {/* Folded corner (top-bottom) */}
-          <div
-            className="absolute right-0 bg-[#E1232E] top-[55.6px]"
-            style={{
-              transform: "rotate(180deg)",
-              width: "0",
-              height: "0",
-              borderLeft: "28px solid transparent",
-              borderTop: "28px solid rgba(255,255,255,0.98)",
-            }}
-          />
-        </div>
-      </div>
+<div className="relative w-full" style={{ height: "12%" }}>
+  <div className="absolute inset-0 bg-[#E1232E] z-0" />
 
-      {/* BODY */}
-      <div className="h-[88%] flex flex-col">
-        {/* Text area + divider */}
+  <div className="relative z-10 flex items-center justify-center h-full">
+    <img
+      src="/KHQR_Logo.png"
+      alt="KHQR Logo"
+      className="h-[60%] w-auto object-contain brightness-0 invert select-none"
+      draggable={false}
+    />
+
+    {/* Folded corner (top-bottom) */}
+    <div
+      className="absolute bottom-0 right-0 z-20 pointer-events-none"
+      style={{
+        width: 0,
+        height: 0,
+        borderLeft: "var(--fold) solid transparent",
+        borderTop: "var(--fold) solid rgba(255,255,255,0.98)",
+        transform: "rotate(180deg)",
+        transformOrigin: "bottom right",
+      }}
+    />
+  </div>
+</div>
+
+      {/* BODY (88%) */}
+      <div className="h-[88%] flex flex-col min-h-0">
+        {/* Text area */}
         <div
           className="w-full"
           style={{
-            paddingLeft: "10%",
-            paddingRight: "10%",
-            paddingTop: "6%",
+            paddingLeft: "var(--padX)",
+            paddingRight: "var(--padX)",
+            paddingTop: "var(--padTop)",
           }}
         >
-          {/* Receiver name (≈3% of card height) */}
+          {/* Receiver name */}
           <div
-            className="text-[#111] opacity-90 font-medium leading-tight"
-            style={{ fontSize: "clamp(10px, 3vh, 14px)" }}
+            className="text-[#111] opacity-90 font-medium leading-tight truncate"
+            style={{
+              fontSize: "clamp(11px, 2.4vw, 14px)",
+            }}
+            title={receiverName}
           >
             {receiverName}
           </div>
@@ -103,7 +109,9 @@ export function KhqrQrCard({
           <div className="flex items-baseline gap-2 mt-1">
             <div
               className="text-[#111] font-extrabold leading-none"
-              style={{ fontSize: "clamp(18px, 6.5vh, 28px)" }}
+              style={{
+                fontSize: "clamp(20px, 5.2vw, 30px)",
+              }}
             >
               {showAmountNumber ? (
                 <>
@@ -111,7 +119,6 @@ export function KhqrQrCard({
                   {amountText}
                 </>
               ) : (
-                // Empty amount guideline
                 <>
                   {symbol ? <span className="mr-1">{symbol}</span> : null}
                   {amount === 0 ? "0" : ""}
@@ -119,12 +126,14 @@ export function KhqrQrCard({
               )}
             </div>
 
-            {/* Currency (≈3% of card height) */}
+            {/* Currency */}
             <div
               className="text-[#111] opacity-80 font-medium"
-              style={{ fontSize: "clamp(10px, 3vh, 14px)" }}
+              style={{
+                fontSize: "clamp(11px, 2.4vw, 14px)",
+              }}
             >
-              {showCurrencySymbol ? currency : currency}
+              {currency}
             </div>
           </div>
 
@@ -132,35 +141,33 @@ export function KhqrQrCard({
           <div className="mt-4 border-t border-dashed border-black/30" />
         </div>
 
-        {/* QR area (Top/Bottom margin ≈8% of card height; LR margin ≈10% already) */}
+        {/* QR area */}
         <div
-          className="flex items-center justify-center flex-1"
+          className="flex items-center justify-center flex-1 min-h-0"
           style={{
-            paddingLeft: "10%",
-            paddingRight: "10%",
-            paddingTop: "8%",
-            paddingBottom: "8%",
+            paddingLeft: "var(--padX)",
+            paddingRight: "var(--padX)",
+            paddingTop: "var(--qrPadY)",
+            paddingBottom: "var(--qrPadY)",
           }}
         >
-          <div className="relative flex items-center justify-center w-full h-full">
-            {/* QR image */}
+          {/* Keep QR always square and centered */}
+          <div className="relative w-full max-w-[320px] aspect-square flex items-center justify-center">
             <img
               src={qrSrc}
               alt="KHQR"
-              className="object-contain w-full h-auto max-h-full"
+              className="object-contain w-full h-full select-none"
               draggable={false}
             />
 
-            {/* Optional center badge (approx) */}
+            {/* Center badge */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="flex items-center justify-center w-8 h-8 bg-black border-2 border-white rounded-full shadow-sm">
-                <span className="text-lg font-black text-white">៛</span>
+              <div className="flex items-center justify-center w-[12%] min-w-8 aspect-square bg-black border-2 border-white rounded-full shadow-sm">
+                <span className="text-base font-black text-white">៛</span>
               </div>
             </div>
           </div>
         </div>
-
-        {/* Bottom padding space is handled by QR area padding */}
       </div>
     </div>
   );

@@ -1,0 +1,103 @@
+.card-container {
+  width: 320px;
+  background-color: #ffffff;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  font-family: 'Inter', sans-serif; /* Or similar sans-serif */
+}
+
+.card-header {
+  background-color: #e31b23; /* Matching the red */
+  padding: 20px;
+  text-align: center;
+  position: relative;
+}
+
+/* Creating that small notch on the right side of the red header */
+.card-header::after {
+  content: "";
+  position: absolute;
+  bottom: -20px;
+  right: 0;
+  border-top: 20px solid #e31b23;
+  border-left: 20px solid transparent;
+}
+
+.logo-text {
+  color: white;
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: 2px;
+}
+
+.card-body {
+  padding: 25px;
+}
+
+.user-name {
+  color: #555;
+  margin: 0;
+  font-size: 14px;
+}
+
+.amount-row {
+  margin-top: 5px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.amount-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #000;
+}
+
+.currency-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #444;
+}
+
+.dashed-line {
+  margin: 25px 0;
+  border-top: 2px dashed #ccc;
+  width: 100%;
+}
+
+.qr-section {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 0;
+}
+
+.qr-placeholder {
+  position: relative;
+  width: 200px;
+  height: 200px;
+}
+
+.qr-placeholder img {
+  width: 100%;
+  height: 100%;
+}
+
+/* The small logo in the middle of the QR */
+.qr-logo-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: #000;
+  color: #fff;
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 3px solid #fff;
+  font-weight: bold;
+}
