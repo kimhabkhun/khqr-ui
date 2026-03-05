@@ -2,6 +2,7 @@ import {
   useState, useRef, useEffect, useCallback,
   CSSProperties, FC, RefObject, ChangeEvent,
 } from "react";
+import QRCode from "qrcode";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,16 +16,17 @@ export interface KhqrQrCardProps {
   amount?: number | string;
   currency?: Currency;
   showCurrencySymbol?: boolean;
-  /**
-   * Resolved image src (data URI, URL, or path).
-   * Pass `undefined` to show the built-in placeholder.
-   */
+  /** Resolved image src (data URI, URL, or path). Pass `undefined` for placeholder. */
   qrSrc?: string;
+  /** True when qrSrc was generated with margin:0 (e.g. from QR String mode) — skips auto-crop. */
+  isGenerated?: boolean;
   style?: CSSProperties;
 }
 
 export interface KhqrQrSquareProps {
   qrSrc?: string;
+  /** True when qrSrc was generated with margin:0 — skips auto-crop. */
+  isGenerated?: boolean;
   style?: CSSProperties;
 }
 
@@ -136,12 +138,97 @@ const CardHeader: FC<CardHeaderProps> = ({ logoH, fold }) => (
   </div>
 );
 
-// ─── QR image renderer (shared) ───────────────────────────────────────────────
+// ─── Canvas auto-crop: strips white quiet zone from external QR images ────────
+// Draws the image onto a canvas, finds the tightest dark-pixel bounding box,
+// and returns a cropped data-URI — so base64/url/path images look identical
+// in size to QR String output (which is already generated with margin:0).
 
-const QrImage: FC<{ src?: string }> = ({ src }) =>
-  src
-    ? <img src={src} alt="KHQR" style={{ width:"100%", height:"100%", objectFit:"fill", display:"block" }} draggable={false} />
-    : <PlaceholderQR />;
+function useCroppedSrc(src: string | undefined): string | undefined {
+  const [out, setOut] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!src) { setOut(undefined); return; }
+    let alive = true;
+
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+
+    img.onerror = () => { if (alive) setOut(src); };
+
+    img.onload = () => {
+      if (!alive) return;
+      const W = img.naturalWidth  || img.width  || 512;
+      const H = img.naturalHeight || img.height || 512;
+
+      // Draw onto canvas so we can read pixels
+      const cvs = document.createElement("canvas");
+      cvs.width = W; cvs.height = H;
+      const ctx = cvs.getContext("2d");
+      if (!ctx) { setOut(src); return; }
+      ctx.drawImage(img, 0, 0);
+
+      let px: ImageData;
+      try { px = ctx.getImageData(0, 0, W, H); }
+      catch (_e) { setOut(src); return; }   // tainted canvas (cross-origin) → fallback
+
+      const d = px.data;
+      // "dark" = not near-white (handles both black and dark-grey modules)
+      const dark = (i: number) =>
+        d[i+3] > 64 && (d[i] < 220 || d[i+1] < 220 || d[i+2] < 220);
+
+      let x0 = W, x1 = 0, y0 = H, y1 = 0;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (dark((y * W + x) * 4)) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+        }
+      }
+
+      if (x0 >= x1 || y0 >= y1) { if (alive) setOut(src); return; } // nothing found
+
+      // Add tiny padding so finder-pattern edges aren't clipped
+      const pad = Math.max(2, Math.round(Math.min(W, H) * 0.004));
+      const cx = Math.max(0, x0 - pad);
+      const cy = Math.max(0, y0 - pad);
+      const cw = Math.min(W, x1 + pad + 1) - cx;
+      const ch = Math.min(H, y1 + pad + 1) - cy;
+
+      const out2 = document.createElement("canvas");
+      out2.width = cw; out2.height = ch;
+      out2.getContext("2d")!.drawImage(cvs, cx, cy, cw, ch, 0, 0, cw, ch);
+
+      if (alive) setOut(out2.toDataURL("image/png"));
+    };
+
+    img.src = src;
+    return () => { alive = false; };
+  }, [src]);
+
+  return out;
+}
+
+// ─── QR image renderer ────────────────────────────────────────────────────────
+// isGenerated=true  → QR String (margin:0), render as-is
+// isGenerated=false → url / path / base64, auto-crop quiet zone via canvas
+
+const QrImage: FC<{ src?: string; isGenerated?: boolean }> = ({ src, isGenerated = false }) => {
+  const cropped = useCroppedSrc(!src || isGenerated ? undefined : src);
+  const display = src ? (isGenerated ? src : (cropped ?? src)) : undefined;
+
+  if (!display) return <PlaceholderQR />;
+  return (
+    <img
+      src={display}
+      alt="KHQR"
+      draggable={false}
+      style={{ width:"100%", height:"100%", objectFit:"fill", display:"block" }}
+    />
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // KhqrQrCard  (portrait 20:29)
@@ -149,7 +236,7 @@ const QrImage: FC<{ src?: string }> = ({ src }) =>
 
 export const KhqrQrCard: FC<KhqrQrCardProps> = ({
   receiverName, amount, currency = "KHR",
-  showCurrencySymbol = false, qrSrc, style: extStyle = {},
+  showCurrencySymbol = false, qrSrc, isGenerated = false, style: extStyle = {},
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const rawH    = useCardHeight(cardRef);
@@ -198,7 +285,7 @@ export const KhqrQrCard: FC<KhqrQrCardProps> = ({
           paddingLeft:padX, paddingRight:padX, paddingTop:qrPadY, paddingBottom:qrPadY,
         }}>
           <div style={{ position:"relative", width:"100%", aspectRatio:"1 / 1" }}>
-            <QrImage src={qrSrc} />
+            <QrImage src={qrSrc} isGenerated={isGenerated} />
             <CentreBadge d={badgeD} />
           </div>
         </div>
@@ -211,7 +298,7 @@ export const KhqrQrCard: FC<KhqrQrCardProps> = ({
 // KhqrQrSquare  (8:9 ratio)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const KhqrQrSquare: FC<KhqrQrSquareProps> = ({ qrSrc, style: extStyle = {} }) => {
+export const KhqrQrSquare: FC<KhqrQrSquareProps> = ({ qrSrc, isGenerated = false, style: extStyle = {} }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const rawH    = useCardHeight(cardRef);
   const h       = rawH || (400 * 9) / 8;
@@ -227,7 +314,7 @@ export const KhqrQrSquare: FC<KhqrQrSquareProps> = ({ qrSrc, style: extStyle = {
       <CardHeader logoH={logoH} fold={fold} />
       <div style={{ flex:1, minHeight:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
         <div style={{ position:"relative", width:"90%", aspectRatio:"1 / 1" }}>
-          <QrImage src={qrSrc} />
+          <QrImage src={qrSrc} isGenerated={isGenerated} />
           <CentreBadge d={badgeD} />
         </div>
       </div>
@@ -236,322 +323,26 @@ export const KhqrQrSquare: FC<KhqrQrSquareProps> = ({ qrSrc, style: extStyle = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pure-TS QR encoder — no CDN, no npm, handles full KHQR payloads
-// Implements: Byte mode, ECC levels M/Q, versions 1-40, masking, SVG output
+// QR encoding — uses `qrcode` (static import, reliable in all bundlers)
+// Install: npm install qrcode && npm install -D @types/qrcode
 // ─────────────────────────────────────────────────────────────────────────────
 
-/* ---------- GF(256) arithmetic for Reed-Solomon ---------- */
-const GF_EXP = new Uint8Array(512);
-const GF_LOG = new Uint8Array(256);
-(() => {
-  let x = 1;
-  for (let i = 0; i < 255; i++) {
-    GF_EXP[i] = x; GF_LOG[x] = i;
-    x = x << 1; if (x & 0x100) x ^= 0x11d;
-  }
-  for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255];
-})();
-const gfMul = (a: number, b: number) => a && b ? GF_EXP[GF_LOG[a] + GF_LOG[b]] : 0;
-const gfPoly = (deg: number): number[] => {
-  let p = [1];
-  for (let i = 0; i < deg; i++) {
-    const q = [1, GF_EXP[i]];
-    const r = new Array(p.length + q.length - 1).fill(0);
-    for (let a = 0; a < p.length; a++) for (let b = 0; b < q.length; b++) r[a+b] ^= gfMul(p[a], q[b]);
-    p = r;
-  }
-  return p;
-};
-function rsEncode(data: number[], ecCount: number): number[] {
-  const gen = gfPoly(ecCount);
-  const msg = [...data, ...new Array(ecCount).fill(0)];
-  for (let i = 0; i < data.length; i++) {
-    const c = msg[i];
-    if (c) for (let j = 0; j < gen.length; j++) msg[i+j] ^= gfMul(gen[j], c);
-  }
-  return msg.slice(data.length);
-}
-
-/* ---------- QR version capacity / ECC tables (Byte mode, ECL=M) ---------- */
-// [version]: [totalCodewords, ecCodewordsPerBlock, blocksG1, dataG1, blocksG2, dataG2]
-const QR_CAPS: Record<number, [number,number,number,number,number,number]> = {
-  1: [26,10,1,16,0,0], 2:[44,16,1,28,0,0], 3:[70,26,1,44,0,0],
-  4:[100,18,2,32,0,0], 5:[134,24,2,43,0,0], 6:[172,16,4,27,0,0],
-  7:[196,18,4,31,0,0], 8:[242,22,2,38,2,39], 9:[292,22,3,36,2,37],
-  10:[346,26,4,43,1,44], 11:[404,30,1,50,4,51], 12:[466,22,6,46,2,47],
-  13:[532,22,8,44,1,45], 14:[581,24,4,36,5,37], 15:[655,24,5,54,5,55],
-  16:[733,28,7,43,3,44], 17:[815,28,10,50,1,51], 18:[901,26,9,53,4,54],
-  19:[991,26,3,45,11,46], 20:[1085,26,3,15,13,16], 21:[1156,26,17,48,0,0],// simplified
-  22:[1258,28,17,22,6,23], 23:[1364,28,4,47,14,48], 24:[1474,28,6,47,14,48],
-  25:[1588,28,8,45,13,46], 26:[1706,28,19,46,4,47], 27:[1828,28,22,45,3,46],
-  28:[1921,28,3,45,23,46], 29:[2051,28,21,45,7,46], 30:[2185,28,19,45,10,46],
-  31:[2323,28,2,45,29,46], 32:[2465,28,10,45,23,46], 33:[2611,28,14,45,21,46],
-  34:[2761,28,14,45,23,46], 35:[2876,28,12,45,26,46], 36:[3034,28,6,45,34,46],
-  37:[3196,28,29,45,14,46], 38:[3362,28,13,45,32,46], 39:[3532,28,40,45,7,46],
-  40:[3706,28,18,45,31,46],
-};
-
-/* ---------- Format & version info strings ---------- */
-const FORMAT_INFO: Record<number, number> = {
-  // ECL=M (bits 10-x): mask patterns 0-7
-  0:0b101010000010010, 1:0b101000100100101, 2:0b101111001111100, 3:0b101101101001011,
-  4:0b100010111111001, 5:0b100000011001110, 6:0b100111110010111, 7:0b100101010100000,
-};
-
-/* ---------- Alignment pattern positions ---------- */
-const ALIGN_POS: Record<number, number[]> = {
-  1:[],2:[6,18],3:[6,22],4:[6,26],5:[6,30],6:[6,34],7:[6,22,38],8:[6,24,42],
-  9:[6,26,46],10:[6,28,50],11:[6,30,54],12:[6,32,58],13:[6,34,62],14:[6,26,46,66],
-  15:[6,26,48,70],16:[6,26,50,74],17:[6,30,54,78],18:[6,30,56,82],19:[6,30,58,86],
-  20:[6,34,62,90],21:[6,28,50,72,94],22:[6,26,50,74,98],23:[6,30,54,78,102],
-  24:[6,28,54,80,106],25:[6,32,58,84,110],26:[6,30,58,86,114],27:[6,34,62,90,118],
-  28:[6,26,50,74,98,122],29:[6,30,54,78,102,126],30:[6,26,52,78,104,130],
-  31:[6,30,56,82,108,132],32:[6,34,60,86,112,136],33:[6,30,58,86,114,142],
-  34:[6,34,62,90,118,146],35:[6,30,54,78,102,126,150],36:[6,24,50,76,102,128,154],
-  37:[6,28,54,80,106,132,158],38:[6,32,58,86,114,142,162],39:[6,26,54,82,110,138,166],
-  40:[6,30,58,86,114,142,170],
-};
-
-type QrMatrix = (0|1|null)[][];
-
-function makeMatrix(size: number): QrMatrix {
-  return Array.from({length:size}, () => new Array(size).fill(null));
-}
-
-function placeFinderPattern(m: QrMatrix, row: number, col: number) {
-  for (let r = -1; r <= 7; r++) for (let c = -1; c <= 7; c++) {
-    const rr = row+r, cc = col+c;
-    if (rr < 0 || cc < 0 || rr >= m.length || cc >= m.length) continue;
-    const inOuter = r>=0&&r<=6&&(c===0||c===6);
-    const inTop   = c>=0&&c<=6&&(r===0||r===6);
-    const inInner = r>=2&&r<=4&&c>=2&&c<=4;
-    m[rr][cc] = (inOuter||inTop||inInner) ? 1 : 0;
-  }
-}
-
-function placeAlignPattern(m: QrMatrix, row: number, col: number) {
-  for (let r = -2; r <= 2; r++) for (let c = -2; c <= 2; c++) {
-    const v = (r===-2||r===2||c===-2||c===2||r===0&&c===0) ? 1 : 0;
-    m[row+r][col+c] = v;
-  }
-}
-
-function applyMask(m: QrMatrix, mask: number, fn: QrMatrix): QrMatrix {
-  const size = m.length;
-  const out  = m.map(row => [...row]) as QrMatrix;
-  for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
-    if (fn[r][c] !== null) continue; // function module
-    let flip = false;
-    if (mask===0) flip = (r+c)%2===0;
-    else if (mask===1) flip = r%2===0;
-    else if (mask===2) flip = c%3===0;
-    else if (mask===3) flip = (r+c)%3===0;
-    else if (mask===4) flip = (Math.floor(r/2)+Math.floor(c/3))%2===0;
-    else if (mask===5) flip = (r*c)%2+(r*c)%3===0;
-    else if (mask===6) flip = ((r*c)%2+(r*c)%3)%2===0;
-    else if (mask===7) flip = ((r+c)%2+(r*c)%3)%2===0;
-    if (flip) out[r][c] = out[r][c] ? 0 : 1;
-  }
-  return out;
-}
-
-function penaltyScore(m: QrMatrix): number {
-  const size = m.length; let score = 0;
-  // rule 1: 5+ same in row/col
-  for (let r = 0; r < size; r++) {
-    for (let isRow of [true,false]) {
-      let run = 1;
-      for (let i = 1; i < size; i++) {
-        const a = isRow ? m[r][i-1] : m[i-1][r];
-        const b = isRow ? m[r][i]   : m[i][r];
-        if (a===b) { run++; if (run===5) score+=3; else if (run>5) score++; }
-        else run=1;
-      }
-    }
-  }
-  // rule 2: 2×2 blocks
-  for (let r=0;r<size-1;r++) for (let c=0;c<size-1;c++) {
-    const v=m[r][c];
-    if (v===m[r][c+1]&&v===m[r+1][c]&&v===m[r+1][c+1]) score+=3;
-  }
-  return score;
-}
-
-/** Encode text → QR SVG string (Byte mode, ECL=M) */
-function encodeQrSvg(text: string): string {
-  const bytes = Array.from(new TextEncoder().encode(text));
-  const len   = bytes.length;
-
-  // pick version
-  let version = 1;
-  for (; version <= 40; version++) {
-    const cap = QR_CAPS[version];
-    if (!cap) continue;
-    const [total, ecPB, b1, d1, b2, d2] = cap;
-    const dataCapacity = b1*d1 + b2*d2;
-    const headerBits = 4 + (version < 10 ? 8 : 16);
-    if (Math.ceil((headerBits + len*8)/8) <= dataCapacity) break;
-  }
-  if (version > 40) throw new Error("Data too long");
-
-  const size = version*4+17;
-  const [,ecPB, b1,d1,b2,d2] = QR_CAPS[version];
-
-  // --- build data bitstream ---
-  const bits: number[] = [];
-  const push = (val: number, n: number) => { for (let i=n-1;i>=0;i--) bits.push((val>>i)&1); };
-  push(0b0100, 4); // byte mode
-  push(len, version<10?8:16);
-  bytes.forEach(b => push(b,8));
-  // terminator + padding
-  const totalData = (b1*d1+b2*d2)*8;
-  for (let i=0;i<4&&bits.length<totalData;i++) bits.push(0);
-  while (bits.length%8) bits.push(0);
-  const PAD = [0xEC,0x11];
-  let pi=0;
-  while (bits.length<totalData) { push(PAD[pi++%2],8); }
-
-  // pack into bytes
-  const dataBytes: number[] = [];
-  for (let i=0;i<bits.length;i+=8) {
-    let b=0; for(let j=0;j<8;j++) b=(b<<1)|(bits[i+j]??0);
-    dataBytes.push(b);
-  }
-
-  // --- interleave blocks + RS ---
-  const blocks: number[][] = [];
-  let offset=0;
-  for (let g=0;g<2;g++) {
-    const count=g===0?b1:b2, dLen=g===0?d1:d2;
-    if (!count) continue;
-    for (let i=0;i<count;i++) {
-      const data=dataBytes.slice(offset,offset+dLen);
-      offset+=dLen;
-      blocks.push([...data, ...rsEncode(data,ecPB)]);
-    }
-  }
-  const totalBlocks=b1+b2;
-  const interleaved: number[]=[];
-  const maxData=Math.max(d1,d2);
-  for (let i=0;i<maxData;i++) blocks.forEach(bl=>{ if(i<bl.length-ecPB) interleaved.push(bl[i]); });
-  for (let i=0;i<ecPB;i++) blocks.forEach(bl=>{ const d=bl.length-ecPB; interleaved.push(bl[d+i]); });
-
-  // --- build matrix ---
-  const mat = makeMatrix(size);
-  const fn  = makeMatrix(size); // function module map
-
-  const markFn = (r:number,c:number) => { if(r>=0&&c>=0&&r<size&&c<size) fn[r][c]=1; };
-
-  // finder patterns + separators
-  for (const [fr,fc] of [[0,0],[0,size-7],[size-7,0]] as [number,number][]) {
-    placeFinderPattern(mat,fr,fc);
-    for(let i=-1;i<=7;i++) { markFn(fr+i,fc-1); markFn(fr-1,fc+i); markFn(fr+i,fc+7); markFn(fr+7,fc+i); }
-    for(let r=fr;r<fr+7;r++) for(let c=fc;c<fc+7;c++) markFn(r,c);
-  }
-
-  // timing patterns
-  for (let i=8;i<size-8;i++) {
-    mat[6][i]=mat[i][6]=(i%2===0)?1:0;
-    markFn(6,i); markFn(i,6);
-  }
-
-  // dark module
-  mat[size-8][8]=1; markFn(size-8,8);
-
-  // alignment patterns
-  if (version>1) {
-    const pos=ALIGN_POS[version]??[];
-    for (const r of pos) for (const c of pos) {
-      if ((r===6&&c===6)||(r===6&&c===pos[pos.length-1])||(c===6&&r===pos[pos.length-1])) continue;
-      placeAlignPattern(mat,r,c);
-      for(let dr=-2;dr<=2;dr++) for(let dc=-2;dc<=2;dc++) markFn(r+dr,c+dc);
-    }
-  }
-
-  // version info (v>=7)
-  if (version>=7) {
-    // simplified: skip version info (affects versions 7+, most KHQR fit <=6)
-  }
-
-  // reserve format info areas
-  for (let i=0;i<8;i++) { markFn(i,8); markFn(8,i); markFn(size-1-i,8); markFn(8,size-8+i); }
-  markFn(8,8);
-
-  // --- place data bits ---
-  let bitIdx=0;
-  const allBits: number[]=[];
-  interleaved.forEach(b=>{ for(let i=7;i>=0;i--) allBits.push((b>>i)&1); });
-  // remainder bits
-  const remBits=[0,7,7,7,7,7,0,0,0,0,0,0,0,3,3,3,3,3,3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4];
-  for(let i=0;i<(remBits[version]??0);i++) allBits.push(0);
-
-  let up=true;
-  for (let c=size-1;c>=0;c-=2) {
-    if (c===6) c--;
-    for (let ii=0;ii<size;ii++) {
-      const r=up?size-1-ii:ii;
-      for (const dc of [0,1]) {
-        const cc=c-dc;
-        if (fn[r][cc]!==null) continue;
-        mat[r][cc]=(allBits[bitIdx++]??0) as 0|1;
-      }
-    }
-    up=!up;
-  }
-
-  // --- pick best mask ---
-  let bestMask=0, bestPenalty=Infinity;
-  for (let mask=0;mask<8;mask++) {
-    const m2=applyMask(mat,mask,fn);
-    const p=penaltyScore(m2);
-    if (p<bestPenalty) { bestPenalty=p; bestMask=mask; }
-  }
-  const finalMat=applyMask(mat,bestMask,fn);
-
-  // place format info
-  const fi=FORMAT_INFO[bestMask]??0;
-  const fiBits: number[]=[];
-  for(let i=14;i>=0;i--) fiBits.push((fi>>i)&1);
-  const fiPos=[[8,0],[8,1],[8,2],[8,3],[8,4],[8,5],[8,7],[8,8],[7,8],[5,8],[4,8],[3,8],[2,8],[1,8],[0,8]];
-  fiPos.forEach(([r,c],i)=>{ finalMat[r][c]=fiBits[i] as 0|1; });
-  // bottom-left
-  for(let i=0;i<7;i++) finalMat[size-1-i][8]=fiBits[i] as 0|1;
-  // right of top-right finder
-  for(let i=0;i<8;i++) finalMat[8][size-8+i]=fiBits[7+i] as 0|1;
-
-  // --- render SVG ---
-  // quiet=0: no extra white border — the card body already provides visual breathing room
-  const quiet=0, cell=10;
-  const total=size*cell;
-  const rects: string[]=[];
-  for(let r=0;r<size;r++) for(let c=0;c<size;c++) {
-    if(finalMat[r][c]===1) {
-      rects.push(`<rect x="${c*cell}" y="${r*cell}" width="${cell}" height="${cell}"/>`);
-    }
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges">
-<rect width="${total}" height="${total}" fill="white"/>
-<g fill="#111111">${rects.join("")}</g>
-</svg>`;
-}
-
-/** Hook: text → base64 data-URI (pure-TS, no CDN, no Blob URLs) */
 function useQrDataUri(text: string): { dataUri: string | null; error: string | null } {
   const [dataUri, setDataUri] = useState<string | null>(null);
   const [error,   setError  ] = useState<string | null>(null);
 
   useEffect(() => {
     if (!text.trim()) { setDataUri(null); setError(null); return; }
-    try {
-      const svg = encodeQrSvg(text);
-      // Encode as base64 data-URI — works in any img src, no Blob/Object URL needed
-      const encoded = btoa(unescape(encodeURIComponent(svg)));
-      setDataUri(`data:image/svg+xml;base64,${encoded}`);
-      setError(null);
-    } catch (e: any) {
-      setError(e?.message ?? "QR generation failed");
-      setDataUri(null);
-    }
+    let cancelled = false;
+    QRCode.toDataURL(text, {
+      errorCorrectionLevel: "M",
+      margin: 0,
+      width: 512,
+      color: { dark: "#111111", light: "#ffffff" },
+    })
+      .then((uri: string) => { if (!cancelled) { setDataUri(uri); setError(null); } })
+      .catch((e: any) => { if (!cancelled) { setError(e?.message || "QR generation failed"); setDataUri(null); } });
+    return () => { cancelled = true; };
   }, [text]);
 
   return { dataUri, error };
@@ -660,11 +451,9 @@ const QrSourceControl: FC<QrSourceControlProps> = ({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
+      // Store the full data URI (including "data:image/xxx;base64," prefix)
       const result = ev.target?.result as string;
-      // result is "data:image/png;base64,XXXX"
-      // strip the prefix to store raw base64
-      const raw = result.includes(",") ? result.split(",")[1] : result;
-      onChange({ qrBase64: raw, qrMode: "base64" });
+      onChange({ qrBase64: result, qrMode: "base64" });
     };
     reader.readAsDataURL(file);
   };
@@ -759,13 +548,13 @@ const QrSourceControl: FC<QrSourceControlProps> = ({
             onChange={e => onChange({ qrBase64: e.target.value })}
           />
           <div style={{ fontSize:11, color:MUTED }}>
-            Raw base64 (without the <code style={{ color:YELLOW }}>data:image/...;base64,</code> prefix)
+            Paste raw base64 <em>or</em> a full <code style={{ color:YELLOW }}>data:image/...;base64,...</code> data URI
           </div>
 
           {/* Preview thumb */}
           {base64Raw.trim() && (
             <img
-              src={`data:image/png;base64,${base64Raw.trim()}`}
+              src={base64Raw.trim().startsWith("data:") ? base64Raw.trim() : `data:image/png;base64,${base64Raw.trim()}`}
               alt="preview"
               style={{ width:64, height:64, objectFit:"contain", borderRadius:6, border:`1px solid ${BORDER}` }}
               onError={() => {}}
@@ -833,14 +622,25 @@ export default function App() {
   const { dataUri: qrStringDataUri, error: qrStringError } = useQrDataUri(state.qrString);
 
   // Resolve the final qrSrc passed to the card components
-  const resolvedQrSrc: string | undefined = (() => {
+  const { resolvedQrSrc, isGenerated } = (() => {
     switch (state.qrMode) {
-      case "url":         return state.qrUrl.trim()    || undefined;
-      case "path":        return state.qrPath.trim()   || undefined;
-      case "base64":      return state.qrBase64.trim() ? `data:image/png;base64,${state.qrBase64.trim()}` : undefined;
-      case "string":      return (state.qrString.trim() ? qrStringDataUri : undefined) || undefined;
-      case "placeholder":
-      default:            return undefined;
+      case "url":
+        return { resolvedQrSrc: state.qrUrl.trim() || undefined, isGenerated: false };
+      case "path":
+        return { resolvedQrSrc: state.qrPath.trim() || undefined, isGenerated: false };
+      case "base64": {
+        const b = state.qrBase64.trim();
+        if (!b) return { resolvedQrSrc: undefined, isGenerated: false };
+        const src = b.startsWith("data:") ? b : `data:image/png;base64,${b}`;
+        return { resolvedQrSrc: src, isGenerated: false };
+      }
+      case "string":
+        return {
+          resolvedQrSrc: (state.qrString.trim() ? qrStringDataUri : undefined) || undefined,
+          isGenerated: true,
+        };
+      default:
+        return { resolvedQrSrc: undefined, isGenerated: false };
     }
   })();
 
@@ -1009,13 +809,14 @@ export default function App() {
             {/* Card */}
             <div style={{ position:"relative", zIndex:1, width:"100%", maxWidth: isSquare ? 300 : 260 }}>
               {isSquare
-                ? <KhqrQrSquare qrSrc={resolvedQrSrc} />
+                ? <KhqrQrSquare qrSrc={resolvedQrSrc} isGenerated={isGenerated} />
                 : <KhqrQrCard
                     receiverName={state.receiverName || " "}
                     amount={amount}
                     currency={state.currency}
                     showCurrencySymbol={state.showCurrencySymbol}
                     qrSrc={resolvedQrSrc}
+                    isGenerated={isGenerated}
                   />
               }
             </div>
