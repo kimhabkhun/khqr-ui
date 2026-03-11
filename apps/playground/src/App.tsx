@@ -1,7 +1,5 @@
-import {
-  useState, useRef, useEffect, useCallback,
-  CSSProperties, FC, RefObject, ChangeEvent,
-} from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import type { CSSProperties, FC, RefObject, ChangeEvent } from "react";
 import QRCode from "qrcode";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -43,7 +41,7 @@ function useCardHeight(ref: RefObject<HTMLDivElement | null>): number {
     const ro = new ResizeObserver(([e]) => setH(e.contentRect.height));
     ro.observe(ref.current);
     return () => ro.disconnect();
-  }, []);
+  }, [ref]);
   return h;
 }
 
@@ -144,39 +142,58 @@ const CardHeader: FC<CardHeaderProps> = ({ logoH, fold }) => (
 // in size to QR String output (which is already generated with margin:0).
 
 function useCroppedSrc(src: string | undefined): string | undefined {
-  const [out, setOut] = useState<string | undefined>(undefined);
+  const [out, setOut] = useState<string | undefined>(() => src || undefined);
+
 
   useEffect(() => {
-    if (!src) { setOut(undefined); return; }
+    if (!src) return;
+
     let alive = true;
 
     const img = new Image();
     img.crossOrigin = "anonymous";
 
-    img.onerror = () => { if (alive) setOut(src); };
+    img.onerror = () => {
+      if (alive) setOut(src);
+    };
 
     img.onload = () => {
       if (!alive) return;
-      const W = img.naturalWidth  || img.width  || 512;
+
+      const W = img.naturalWidth || img.width || 512;
       const H = img.naturalHeight || img.height || 512;
 
-      // Draw onto canvas so we can read pixels
       const cvs = document.createElement("canvas");
-      cvs.width = W; cvs.height = H;
+      cvs.width = W;
+      cvs.height = H;
+
       const ctx = cvs.getContext("2d");
-      if (!ctx) { setOut(src); return; }
+      if (!ctx) {
+        if (alive) setOut(src);
+        return;
+      }
+
       ctx.drawImage(img, 0, 0);
 
       let px: ImageData;
-      try { px = ctx.getImageData(0, 0, W, H); }
-      catch (_e) { setOut(src); return; }   // tainted canvas (cross-origin) → fallback
+
+      try {
+        px = ctx.getImageData(0, 0, W, H);
+      } catch {
+        if (alive) setOut(src);
+        return; // cross-origin fallback
+      }
 
       const d = px.data;
-      // "dark" = not near-white (handles both black and dark-grey modules)
-      const dark = (i: number) =>
-        d[i+3] > 64 && (d[i] < 220 || d[i+1] < 220 || d[i+2] < 220);
 
-      let x0 = W, x1 = 0, y0 = H, y1 = 0;
+      const dark = (i: number) =>
+        d[i + 3] > 64 && (d[i] < 220 || d[i + 1] < 220 || d[i + 2] < 220);
+
+      let x0 = W,
+        x1 = 0,
+        y0 = H,
+        y1 = 0;
+
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           if (dark((y * W + x) * 4)) {
@@ -188,24 +205,32 @@ function useCroppedSrc(src: string | undefined): string | undefined {
         }
       }
 
-      if (x0 >= x1 || y0 >= y1) { if (alive) setOut(src); return; } // nothing found
+      if (x0 >= x1 || y0 >= y1) {
+        if (alive) setOut(src);
+        return;
+      }
 
-      // Add tiny padding so finder-pattern edges aren't clipped
       const pad = Math.max(2, Math.round(Math.min(W, H) * 0.004));
+
       const cx = Math.max(0, x0 - pad);
       const cy = Math.max(0, y0 - pad);
       const cw = Math.min(W, x1 + pad + 1) - cx;
       const ch = Math.min(H, y1 + pad + 1) - cy;
 
       const out2 = document.createElement("canvas");
-      out2.width = cw; out2.height = ch;
+      out2.width = cw;
+      out2.height = ch;
+
       out2.getContext("2d")!.drawImage(cvs, cx, cy, cw, ch, 0, 0, cw, ch);
 
       if (alive) setOut(out2.toDataURL("image/png"));
     };
 
     img.src = src;
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+    };
   }, [src]);
 
   return out;
@@ -327,26 +352,55 @@ export const KhqrQrSquare: FC<KhqrQrSquareProps> = ({ qrSrc, isGenerated = false
 // Install: npm install qrcode && npm install -D @types/qrcode
 // ─────────────────────────────────────────────────────────────────────────────
 
-function useQrDataUri(text: string): { dataUri: string | null; error: string | null } {
+function useQrDataUri(
+  text: string
+): { dataUri: string | null; error: string | null } {
   const [dataUri, setDataUri] = useState<string | null>(null);
-  const [error,   setError  ] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!text.trim()) { setDataUri(null); setError(null); return; }
+    const value = text.trim();
     let cancelled = false;
-    QRCode.toDataURL(text, {
-      errorCorrectionLevel: "M",
-      margin: 0,
-      width: 512,
-      color: { dark: "#111111", light: "#ffffff" },
-    })
-      .then((uri: string) => { if (!cancelled) { setDataUri(uri); setError(null); } })
-      .catch((e: any) => { if (!cancelled) { setError(e?.message || "QR generation failed"); setDataUri(null); } });
-    return () => { cancelled = true; };
+
+    async function generate() {
+      if (!value) {
+        if (!cancelled) {
+          setDataUri(null);
+          setError(null);
+        }
+        return;
+      }
+
+      try {
+        const uri = await QRCode.toDataURL(value, {
+          errorCorrectionLevel: "M",
+          margin: 0,
+          width: 512,
+          color: { dark: "#111111", light: "#ffffff" },
+        });
+
+        if (!cancelled) {
+          setDataUri(uri);
+          setError(null);
+        }
+      } catch (e: unknown) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "QR generation failed");
+          setDataUri(null);
+        }
+      }
+    }
+
+    generate();
+
+    return () => {
+      cancelled = true;
+    };
   }, [text]);
 
   return { dataUri, error };
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Playground state
